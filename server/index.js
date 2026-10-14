@@ -119,12 +119,12 @@ async function makeRoom(user,opts,practice=false){
   const difficulty=opts.difficulty||'normal';if(!['easy','normal','hard'].includes(difficulty))throw Error('ความยากไม่ถูกต้อง');
   const room={code,title:String(opts.title||'เมืองหิมะของเรา').trim().slice(0,60)||'เมืองหิมะของเรา',hostId:user.id,hostName:user.name,
     players:new Map(),clients:new Map(),status:'lobby',duration,questions,quizTitle,practice,
-    survivorSpeed:190,cursedSpeed:{easy:155,normal:180,hard:210}[difficulty],createdAt:Date.now(),events:[],shots:[],farms:[],endsAt:0};
+    survivorSpeed:230,cursedSpeed:{easy:170,normal:205,hard:235}[difficulty],createdAt:Date.now(),events:[],shots:[],farms:[],endsAt:0};
   if(practice){room.players.set(user.id,newPlayer(user.id,user.name,user.avatar));
-    for(let i=0;i<3;i++){const id=`bot-${i}`;room.players.set(id,newPlayer(id,['มินต์','โคโค่','ฟรอสต์'][i],i+1,true));}
-    startRoom(room);const human=room.players.get(user.id);human.cursed=false;human.ammo=0;human.launcher=false;
+    for(let i=0;i<5;i++){const id=`bot-${i}`;room.players.set(id,newPlayer(id,['มินต์','โคโค่','ฟรอสต์','บลู','โมจิ'][i],i+1,true));}
+    startRoom(room);const human=room.players.get(user.id);human.cursed=false;human.ammo=15;human.launcher=true;human.coins=20;
     const bot=[...room.players.values()].find(p=>p.bot);for(const p of room.players.values())if(p.bot)p.cursed=false;
-    bot.cursed=true;bot.launcher=true;bot.ammo=15;room.events=[{id:randomUUID(),text:`${bot.name} ติดคำสาปคนแรก!`,at:Date.now()}];
+    bot.cursed=true;bot.launcher=true;bot.ammo=15;bot.x=1450;bot.y=590;room.events=[{id:randomUUID(),text:`${bot.name} เป็นซอมบี้! ตอบคำถาม เติมพลัง แล้วเอาตัวรอด`,at:Date.now()}];
   }
   rooms.set(code,room);return room;
 }
@@ -229,7 +229,8 @@ wss.on('connection',ws=>{
     if(!p||room.status!=='playing')return;
     if(m.type==='input'){
       if(!Number.isFinite(m.x)||!Number.isFinite(m.y))return;
-      const len=Math.max(1,Math.hypot(m.x,m.y));p.input={x:m.x/len,y:m.y/len};p.lastInput=now;
+      const len=Math.max(1,Math.hypot(m.x,m.y));p.input={x:m.x/len,y:m.y/len};p.lastInput=now;if(Number.isFinite(m.aim))p.aim=m.aim;
+    }else if(m.type==='practice-pause'&&room.practice&&room.hostId===p.id){room.paused=!!m.paused;p.input={x:0,y:0};
     }else if(m.type==='shoot'){shoot(room,p,m.angle,now);}
     else if(m.type==='interact')send(ws,{type:'notice',text:interact(room,p,m.kind,now)});
     else if(m.type==='question'){

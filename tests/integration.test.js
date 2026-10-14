@@ -41,7 +41,8 @@ test('real accounts, room authorization, WebSockets, rewards, QR and history', {
   assert.equal((await request(`/api/rooms/${code}/start`,{},student.cookie)).status,403);
   const qr=await request(`/api/rooms/${code}/qr`,null,teacher.cookie);assert.match(qr.data.qr,/^data:image\/png;base64,/);assert.equal(qr.data.url,`${base}/?room=${code}`);
   assert.equal((await request(`/api/rooms/${code}/start`,{},teacher.cookie)).status,200);
-  const state=(await wait(studentWS,m=>m.type==='state'&&m.room.status==='playing')).room;
+  await delay(6200);
+  const state=(await wait(studentWS,m=>m.type==='state'&&m.room.status==='playing'&&!m.room.readyRemaining)).room;
   const me=state.players.find(p=>p.id===student.data.user.id);
   studentWS.send(JSON.stringify({type:'question'}));const q=(await wait(studentWS,m=>m.type==='question')).question;
   assert.equal(q.answer,undefined);assert.deepEqual(q.options,['1','2','3','4']);
