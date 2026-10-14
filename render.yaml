@@ -1,0 +1,30 @@
+# Free trial: Render's free Postgres expires after 30 days.
+services:
+  - type: web
+    name: frostbound-classroom
+    runtime: node
+    region: singapore
+    plan: free
+    buildCommand: pnpm install --frozen-lockfile --prod
+    startCommand: node server/index.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 24.19.0
+      - key: PNPM_VERSION
+        value: 11.25.0
+      - key: NODE_ENV
+        value: production
+      - key: COOKIE_SECURE
+        value: true
+      - key: TRUST_PROXY
+        value: 1
+      - key: DATABASE_URL
+        fromDatabase:
+          name: frostbound-classroom-db
+          property: connectionString
+databases:
+  - name: frostbound-classroom-db
+    plan: free
+    region: singapore
+    postgresMajorVersion: "17"
