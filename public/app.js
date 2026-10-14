@@ -1,6 +1,9 @@
 import {createWorld} from './renderer.js';
 import {QRScanner} from './scanner.js';
 import {WORLD,distance} from './world.js';
+import {unlockSound,playSound,soundEnabled} from './sound.js';
+document.addEventListener('pointerdown',unlockSound,{capture:true});
+document.addEventListener('keydown',unlockSound,{capture:true});
 const $=s=>document.querySelector(s),app=$('#app'),modalRoot=$('#modal-root');
 const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const avatarNames=['บลู','ฟ็อกซ์','โมจิ','มินต์','สโนว์','รูบี้'];
@@ -74,7 +77,7 @@ function openSocket(code){
   ws.onmessage=e=>{
     if(socket!==ws)return;const m=JSON.parse(e.data);
     if(m.type==='state'){
-      const old=room;room=m.room;
+      const old=room;room=m.room;room.clientReceivedAt=performance.now();
       if(screen!==room.status){if(room.status==='lobby')renderLobby();else if(room.status==='playing')renderArena();else if(room.status==='finished'){if(!world)renderArena();screen='finished';showResults();}}
       if(room.status==='lobby')updateLobby();else updateHUD();
       if(room.status==='finished'&&lastResults!==String(room.startedAt)){lastResults=String(room.startedAt);showResults();}
@@ -118,21 +121,23 @@ function renderArena(){
   if(room.practice&&room.paused)send({type:'practice-pause',paused:false});
   const participant=room.players.some(p=>p.id===user.id);
   app.innerHTML=`<main class="arena"><div class="game-canvas" id="game-canvas" aria-label="สนามเมืองหิมะ"></div><div class="hud-top"><div class="hud-brand"><span class="brand-mark">❄</span><div><strong>FROSTBOUND</strong><small>ห้อง ${room.code}${room.practice?' · ฝึกกับบอท':''}</small></div></div><div class="hud-center" id="hud-center"></div><div class="hud-actions"><button class="icon-btn" data-action="sound" aria-label="เปิดหรือปิดเสียง">♫</button><button class="icon-btn map-toggle" data-action="map" aria-label="เปิดหรือปิดแผนที่">${icon('qr',18)}</button><button class="icon-btn" data-action="help" aria-label="วิธีเล่น">${icon('help',18)}</button>${room.isHost&&!room.practice?'<button class="icon-btn" data-action="stop" aria-label="จบเกม">⏹</button>':''}<button class="icon-btn" data-action="leave" aria-label="ออกจากเกม">${icon('exit',17)}</button></div></div><div id="hud-stats"></div><div class="event-feed" id="event-feed"></div><div id="countdown" class="countdown" aria-live="polite"></div>${participant?`<div id="objective" class="objective-chip"></div><div class="hud-bottom"><button class="btn btn-primary answer-action" data-action="question">${icon('book',20)} ตอบคำถาม <span class="key">Q</span></button><button class="btn btn-light" data-action="interact" id="interact-action"><span id="interact-label">สำรวจจุดใกล้ตัว</span> <span class="key">E</span></button></div><div class="controls-hint"><kbd>W A S D</kbd> เดิน · เมาส์เล็ง · กดค้างเพื่อยิง<br><kbd>Q</kbd> คำถาม · <kbd>E</kbd> ใช้งาน · <kbd>M</kbd> แผนที่</div><div class="joystick" id="joystick" role="button" tabindex="0" aria-label="จอยบังคับทิศทาง"><span class="joystick-thumb"></span></div><button class="touch-shoot" id="touch-fire" aria-label="ยิงบอลหิมะ">❄<small>ยิง</small></button>`:'<div class="spectator-note">ผู้ดูแลสนาม · ดูแผนที่และผลของผู้เล่นได้ · กด ⏹ เพื่อจบเกม</div>'}</main>`;
-  world=createWorld($('#game-canvas'),{getState:()=>room,getUserId:()=>user.id,onInput:(x,y,aim)=>send({type:'input',x,y,aim}),onShoot:shoot,onQuestion:question,onInteract:interaction,isBlocked:()=>!!modalType||room.status!=='playing'});
+  world=createWorld($('#game-canvas'),{getState:()=>room,getUserId:()=>user.id,onInput:(x,y,aim,commands)=>send({type:'input',x,y,aim,commands}),onShoot:shoot,onQuestion:question,onInteract:interaction,isBlocked:()=>!!modalType||room.status!=='playing'||socket?.readyState!==WebSocket.OPEN});
   const stick=$('#joystick');if(stick){let pointer=null;const thumb=stick.querySelector('span');const reset=()=>{pointer=null;world?.setTouch(0,0);thumb.style.transform='translate(0,0)';};
     const move=e=>{const rect=stick.getBoundingClientRect(),dx=e.clientX-(rect.left+rect.width/2),dy=e.clientY-(rect.top+rect.height/2),n=Math.max(1,Math.hypot(dx,dy)/34);world?.setTouch(dx/n/34,dy/n/34);thumb.style.transform=`translate(${dx/n}px,${dy/n}px)`;};
     stick.onpointerdown=e=>{e.preventDefault();pointer=e.pointerId;stick.setPointerCapture(pointer);move(e);};stick.onpointermove=e=>{if(e.pointerId===pointer)move(e);};stick.onpointerup=stick.onpointercancel=stick.onlostpointercapture=reset;
-    const fire=$('#touch-fire');fire.onpointerdown=e=>{e.preventDefault();fire.setPointerCapture(e.pointerId);world?.setFiring(true);world?.shoot();};fire.onpointerup=fire.onpointercancel=fire.onlostpointercapture=()=>world?.setFiring(false);
+    const fire=$('#touch-fire');for(const control of [stick,fire]){control.addEventListener('touchstart',e=>{unlockSound();e.preventDefault();},{passive:false});control.addEventListener('touchend',e=>e.preventDefault(),{passive:false});control.addEventListener('dblclick',e=>e.preventDefault());control.addEventListener('contextmenu',e=>e.preventDefault());}fire.onpointerdown=e=>{e.preventDefault();fire.setPointerCapture(e.pointerId);world?.setFiring(true);world?.shoot();};fire.onpointerup=fire.onpointercancel=fire.onlostpointercapture=()=>world?.setFiring(false);
   }
-  updateHUD();
+  updateSoundButton();updateHUD();
 }
+function updateSoundButton(){const button=$('[data-action=sound]');if(button){button.setAttribute('aria-pressed',String(soundEnabled()));button.setAttribute('aria-label',soundEnabled()?'ปิดเสียงเอฟเฟกต์':'เปิดเสียงเอฟเฟกต์');button.textContent=soundEnabled()?'🔊':'🔇';}}
 let eventSignature='';
+const htmlIfChanged=(element,html)=>{if(element&&element._hudHTML!==html){element.innerHTML=html;element._hudHTML=html;}};
 function updateHUD(){
   if(!$('#hud-center'))return;const survivors=room.players.filter(p=>!p.cursed&&p.connected).length,rem=Math.max(0,room.remaining||0),cursed=room.players.filter(p=>p.cursed&&p.connected).length;
-  $('#hud-center').innerHTML=`<div><strong>${String(Math.floor(rem/60)).padStart(2,'0')}:${String(rem%60).padStart(2,'0')}</strong><small>เวลาเอาตัวรอด</small></div><span class="team-count">${survivors} คน <i>vs</i> ${cursed} ซอมบี้</span>`;
-  const ready=room.readyRemaining||0;$('#countdown').hidden=!ready;$('#countdown').innerHTML=ready?`<small>เตรียมตัว · ซอมบี้กำลังมา!</small><strong>${ready}</strong><span>WASD เดิน · Q ตอบคำถาม · คลิกยิง</span>`:'';
+  htmlIfChanged($('#hud-center'),`<div><strong>${String(Math.floor(rem/60)).padStart(2,'0')}:${String(rem%60).padStart(2,'0')}</strong><small>เวลาเอาตัวรอด</small></div><span class="team-count">${survivors} คน <i>vs</i> ${cursed} ซอมบี้</span>`);
+  const ready=room.readyRemaining||0;$('#countdown').hidden=!ready;htmlIfChanged($('#countdown'),ready?`<small>เตรียมตัว · ซอมบี้กำลังมา!</small><strong>${ready}</strong><span>WASD เดิน · Q ตอบคำถาม · คลิกยิง</span>`:'');
   const me=room.players.find(p=>p.id===user.id);
-  if(me){const low=!me.cursed&&me.energy<25;$('#hud-stats').className='hud-stats '+(me.cursed?'zombie-stats':'')+(low?' low-energy':'');$('#hud-stats').innerHTML=`<div class="hud-player"><div class="avatar">${me.cursed?'<img src="/art/zombie.svg" alt="ซอมบี้">':avatars[me.avatar]}</div><div><b>${escape(me.name)}</b><small>${me.cursed?'ซอมบี้ · ล่าผู้รอดชีวิต':'ทีมคน · อยู่รอดจนหมดเวลา'}</small></div></div><div class="bar-label"><span>${me.cursed?'สถานะ':'พลังชีวิต'}</span><b>${me.cursed?(me.frozenUntil>Date.now()?'ถูกแช่แข็ง':'พร้อมล่า'):`${Math.ceil(me.hp)} / 100`}</b></div>${me.cursed?'':'<div class="bar hp"><i style="width:'+me.hp+'%"></i></div>'}<div class="bar-label"><span>${me.cursed?'บอลหิมะ':'พลังงาน'}</span><b>${me.cursed?`${me.ammo} ลูก`:`${Math.ceil(me.energy)} / 100`}</b></div><div class="bar energy"><i style="width:${me.cursed?Math.min(100,me.ammo):me.energy}%"></i></div><div class="inventory"><span title="บอลหิมะ">❄ <b>${me.ammo}</b></span><span title="เหรียญ">🪙 <b>${me.coins}</b></span><span title="ตอบถูก">✓ <b>${me.correct}</b></span></div>`;
+  if(me){const low=!me.cursed&&me.energy<25;$('#hud-stats').className='hud-stats '+(me.cursed?'zombie-stats':'')+(low?' low-energy':'');htmlIfChanged($('#hud-stats'),`<div class="hud-player"><div class="avatar">${me.cursed?'<img src="/art/zombie.svg" alt="ซอมบี้">':avatars[me.avatar]}</div><div><b>${escape(me.name)}</b><small>${me.cursed?'ซอมบี้ · ล่าผู้รอดชีวิต':'ทีมคน · อยู่รอดจนหมดเวลา'}</small></div></div><div class="bar-label"><span>${me.cursed?'สถานะ':'พลังชีวิต'}</span><b>${me.cursed?(me.frozenUntil>Date.now()?'ถูกแช่แข็ง':'พร้อมล่า'):`${Math.ceil(me.hp)} / 100`}</b></div>${me.cursed?'':'<div class="bar hp"><i style="width:'+me.hp+'%"></i></div>'}<div class="bar-label"><span>${me.cursed?'บอลหิมะ':'พลังงาน'}</span><b>${me.cursed?`${me.ammo} ลูก`:`${Math.ceil(me.energy)} / 100`}</b></div><div class="bar energy"><i style="width:${me.cursed?Math.min(100,me.ammo):Math.ceil(me.energy)}%"></i></div><div class="inventory"><span title="บอลหิมะ">❄ <b>${me.ammo}</b></span><span title="เหรียญ">🪙 <b>${me.coins}</b></span><span title="ตอบถูก">✓ <b>${me.correct}</b></span></div>`);
     const plot=[...WORLD.farms].sort((a,b)=>distance(me,a)-distance(me,b))[0],plant=room.farms.find(f=>f.id===plot?.id);let context='สำรวจจุดใกล้ตัว';
     if(distance(me,WORLD.supply)<105)context='รักษา · 20 เหรียญ';else if(WORLD.fishing.some(f=>distance(me,f)<105))context=me.fishingUntil?(me.fishingUntil>Date.now()?'ตกปลา… รอ '+Math.ceil((me.fishingUntil-Date.now())/1000)+' วิ':'เก็บปลา!'):'ตกปลา · ได้ทรัพยากร';else if(plot&&distance(me,plot)<90)context=plant?(plant.owner!==me.id?'แปลงของเพื่อน':plant.readyAt>Date.now()?'กำลังโต · '+Math.ceil((plant.readyAt-Date.now())/1000)+' วิ':'เก็บเครื่องยิง!'):'ปลูกเครื่องยิง · 20 เหรียญ';
     if($('#interact-label'))$('#interact-label').textContent=context;
@@ -145,7 +150,8 @@ function shoot(angle){
   const me=room?.players.find(p=>p.id===user.id);if(!me||room.status!=='playing')return;
   if(!me.launcher){toast('ปลูกเครื่องยิงที่แปลงด้านล่างซ้ายก่อน · ใช้ 20 เหรียญ');return;}
   if(!me.ammo){toast(me.cursed?'ตอบคำถามเพื่อรับบอลหิมะเพิ่ม':'ปลูกและเก็บเกี่ยวเพื่อเติมบอลหิมะ');return;}
-  send({type:'shoot',angle});
+  if(room.readyRemaining||room.paused||me.frozenUntil>room.serverNow)return false;
+  send({type:'shoot',angle});return true;
 }
 function question(){if(room?.status==='playing'&&room.players.some(p=>p.id===user.id))send({type:'question'});}
 function interaction(){const me=room?.players.find(p=>p.id===user.id);if(!me)return;send({type:'interact',kind:distance(me,WORLD.supply)<105?'heal':WORLD.fishing.some(f=>distance(me,f)<105)?'fish':'plant'});}
@@ -156,6 +162,7 @@ function showQuestion(q){
 }
 function answerResult(m){
   if(modalType!=='question')return;
+  playSound(m.correct?'reward':'wrong');
   document.querySelectorAll('.answer-btn').forEach(b=>{b.disabled=true;if(Number(b.dataset.answer)===m.answer)b.classList.add('correct');else if(b.dataset.selected)b.classList.add('wrong');});
   $('#answer-feedback').innerHTML=`<div class="answer-result"><strong style="color:${m.correct?'#588042':'#af6b5c'}">${m.correct?'✓ ถูกต้อง! เติมพลังแล้ว':'ลองอีกครั้ง เกือบแล้ว!'}</strong><p>${escape(m.reward)}</p><button class="btn btn-primary btn-small" data-action="next-question">ตอบข้อต่อไป ${icon('arrow',15)}</button> <button class="btn btn-outline btn-small" data-action="close">กลับสู่สนาม</button></div>`;
   activeQuestion=null;
@@ -218,7 +225,7 @@ async function showScanner(){
 async function perform(action,el){
   if(action==='home'){closeModal();if(room)leaveGame();else renderHome();}
   else if(action==='login')auth('login');else if(action==='register')auth('register');
-  else if(action==='close')closeModal();else if(action==='help')help();else if(action==='map')world?.toggleMap();else if(action==='sound'){const enabled=world?.toggleSound();toast(enabled?'เปิดเสียงแล้ว':'ปิดเสียงแล้ว');}
+  else if(action==='close')closeModal();else if(action==='help')help();else if(action==='map')world?.toggleMap();else if(action==='sound'){const enabled=world?.toggleSound();updateSoundButton();toast(enabled?'เปิดเสียงแล้ว':'ปิดเสียงแล้ว');}
   else if(action==='host')hostFlow();else if(action==='host-quiz')hostFlow(el.dataset.id);
   else if(action==='practice')practice();else if(action==='practice-again'){leaveGame(false);practice();}
   else if(action==='scanner')showScanner();else if(action==='quizzes'){closeModal();renderQuizzes();}

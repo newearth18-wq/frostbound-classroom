@@ -1,18 +1,12 @@
-import {WORLD,movePosition,distance} from './world.js';
+import {WORLD,distance} from './world.js';
+import {MotionPredictor,samplePosition} from './motion.js';
+import {playSound as sound,unlockSound,toggleSound} from './sound.js';
 // Rendering and input prediction are disposable. The server owns game rules.
 const INK=0x2a3c55;
 export function createWorld(parent,{preview=false,getState=()=>null,getUserId=()=>null,onInput=()=>{},onShoot=()=>{},onQuestion=()=>{},onInteract=()=>{},isBlocked=()=>false}={}){
-  let scene,game,keys,cursors,lastInput=0,aim=0,pointerAim=false,held=false,touch={x:0,y:0},input={x:0,y:0},seenState=null,showMap=!preview,muted=localStorage.getItem('frostbound-muted')==='true',audio;
+  let scene,game,keys,cursors,lastInput=0,aim=0,pointerAim=false,held=false,touch={x:0,y:0},input={x:0,y:0},seenState=null,showMap=!preview,predictor=new MotionPredictor();
   const entities=new Map(),seenFX=new Set(),effects=[],prints=[];let fxLayer,shotLayer,snowLayer,mini,farmLayer,reticle,lastFire=0,lastFoot=0;
   const size=()=>({width:parent.clientWidth||800,height:parent.clientHeight||500});
-  const sound=(kind)=>{
-    if(muted||preview)return;
-    try{audio ||= new (window.AudioContext||window.webkitAudioContext)();if(audio.state==='suspended')audio.resume();
-      const o=audio.createOscillator(),g=audio.createGain();o.connect(g);g.connect(audio.destination);const t=audio.currentTime;
-      o.type=kind==='hit'?'triangle':'sine';o.frequency.setValueAtTime(kind==='shoot'?510:kind==='hit'?190:780,t);o.frequency.exponentialRampToValueAtTime(kind==='reward'?1200:90,t+.12);
-      g.gain.setValueAtTime(.035,t);g.gain.exponentialRampToValueAtTime(.001,t+.14);o.start(t);o.stop(t+.15);
-    }catch{}
-  };
   function panel(g,color,x,y,w,h,r=8){g.fillStyle(color);g.fillRoundedRect(x,y,w,h,r);g.lineStyle(3,INK);g.strokeRoundedRect(x,y,w,h,r);}
   function label(s,x,y,text,color='#314b65',fontSize=13){return s.add.text(x,y,text,{fontFamily:'Noto Sans Thai',fontSize,fontStyle:'bold',color,stroke:'#ffffff',strokeThickness:4}).setOrigin(.5).setDepth(y+10);}
   function tree(s,o){
@@ -70,10 +64,10 @@ export function createWorld(parent,{preview=false,getState=()=>null,getUserId=()
     const gun=s.add.graphics();panel(gun,0x8b9fba,12,-8,29,16,6);panel(gun,0x344e70,32,-7,13,14,3);panel(gun,0xa5e4f9,35,-6,9,12,3);gun.setVisible(!!p.launcher);
     const shield=s.add.ellipse(0,-12,80,83).setStrokeStyle(3,0x8bbceb,.75).setVisible(false);
     const name=s.add.text(0,36,p.name,{fontFamily:'Noto Sans Thai',fontSize:12,fontStyle:'bold',color:'#283a54',stroke:'#ffffff',strokeThickness:4}).setOrigin(.5);
-    const hp=s.add.graphics();const c=s.add.container(p.x,p.y,[shadow,ring,...feet,body,gun,shield,hp,name]);Object.assign(c,{body,feet,gun,shield,hp,role:p.cursed,avatar:p.avatar,prevHP:p.hp,prevCoins:p.coins,prevAmmo:p.ammo,lastAt:0});return c;
+    const hp=s.add.graphics();const c=s.add.container(p.x,p.y,[shadow,ring,...feet,body,gun,shield,hp,name]);Object.assign(c,{body,feet,gun,shield,hp,role:p.cursed,avatar:p.avatar,prevHP:p.hp,prevCoins:p.coins,prevAmmo:p.ammo,samples:[]});return c;
   }
-  function fire(){const room=getState();if(isBlocked()||room?.readyRemaining||Date.now()-lastFire<405)return;lastFire=Date.now();onShoot(aim);}
-  const blur=()=>{held=false;touch={x:0,y:0};input={x:0,y:0};if(keys)for(const k of Object.values(keys))k.reset();if(cursors)for(const k of Object.values(cursors))k.reset();onInput(0,0,aim);};
+  function fire(){const room=getState();if(isBlocked()||room?.readyRemaining||Date.now()-lastFire<405)return;lastFire=Date.now();if(onShoot(aim))sound('shoot');}
+  const blur=()=>{held=false;touch={x:0,y:0};input={x:0,y:0};if(keys)for(const k of Object.values(keys))k.reset();if(cursors)for(const k of Object.values(cursors))k.reset();onInput(0,0,aim,predictor.drain());};
   class SnowScene extends Phaser.Scene{
     preload(){for(let i=0;i<6;i++)this.load.svg('avatar-'+i,'/art/avatar-'+i+'.svg',{width:128,height:128});this.load.svg('zombie','/art/zombie.svg',{width:128,height:128});}
     create(){
@@ -83,12 +77,12 @@ export function createWorld(parent,{preview=false,getState=()=>null,getUserId=()
       if(!preview){keys=this.input.keyboard.addKeys('W,A,S,D,Q,E,SPACE');cursors=this.input.keyboard.createCursorKeys();
         this.input.keyboard.on('keydown-Q',()=>{if(!isBlocked())onQuestion();});this.input.keyboard.on('keydown-E',()=>{if(!isBlocked())onInteract();});this.input.keyboard.on('keydown-M',()=>showMap=!showMap);this.input.keyboard.disableGlobalCapture();
         this.input.on('pointermove',pointer=>{if(pointer.pointerType==='touch'||isBlocked())return;const me=entities.get(getUserId());if(!me)return;const w=this.cameras.main.getWorldPoint(pointer.x,pointer.y);aim=Math.atan2(w.y-me.y,w.x-me.x);pointerAim=true;});
-        this.input.on('pointerdown',pointer=>{if(isBlocked())return;const me=entities.get(getUserId());if(!me)return;const w=this.cameras.main.getWorldPoint(pointer.x,pointer.y);aim=Math.atan2(w.y-me.y,w.x-me.x);pointerAim=true;held=pointer.pointerType!=='touch';fire();});
+        this.input.on('pointerdown',pointer=>{unlockSound();if(isBlocked())return;const me=entities.get(getUserId());if(!me)return;const w=this.cameras.main.getWorldPoint(pointer.x,pointer.y);aim=Math.atan2(w.y-me.y,w.x-me.x);pointerAim=true;held=pointer.pointerType!=='touch';fire();});
         this.input.on('pointerup',()=>held=false);this.input.on('gameout',()=>held=false);window.addEventListener('blur',blur);
       }
     }
     update(time,delta){
-      const dt=Math.min(.05,delta/1000),room=getState(),now=Date.now();
+      const dt=Math.min(.05,delta/1000),room=getState(),receipt=room?.clientReceivedAt??performance.now(),now=room?(room.serverNow+performance.now()-receipt):Date.now();
       const ps=preview?[
         {id:'a',name:'บลู',avatar:0,x:840+Math.sin(time/1800)*125,y:570+Math.cos(time/2200)*85,cursed:false,moving:true,launcher:true,aim:0,hp:100},
         {id:'b',name:'โมจิ',avatar:1,x:1010+Math.sin(time/2300)*115,y:730+Math.cos(time/2500)*50,cursed:false,moving:true,hp:100},
@@ -97,29 +91,31 @@ export function createWorld(parent,{preview=false,getState=()=>null,getUserId=()
       ]:room?.players||[];
       if(!preview){let x=touch.x,y=touch.y;if(keys&&!isBlocked()&&!room?.readyRemaining){x+=(keys.D.isDown||cursors.right.isDown?1:0)-(keys.A.isDown||cursors.left.isDown?1:0);y+=(keys.S.isDown||cursors.down.isDown?1:0)-(keys.W.isDown||cursors.up.isDown?1:0);}else{x=0;y=0;}
         const n=Math.max(1,Math.hypot(x,y));input={x:x/n,y:y/n};if(!pointerAim&&Math.hypot(x,y)>.01)aim=Math.atan2(y,x);
-        if(time-lastInput>50&&room?.status==='playing'){onInput(input.x,input.y,aim);lastInput=time;}
+        if(time-lastInput>50&&room?.status==='playing'){onInput(input.x,input.y,aim,predictor.drain());lastInput=time;}
         if((held||keys?.SPACE.isDown)&&!isBlocked())fire();
       }
       const fresh=seenState!==room;seenState=room;const ids=new Set(ps.map(p=>p.id));for(const [id,c]of entities)if(!ids.has(id)){c.destroy(true);entities.delete(id);}
-      for(const p of ps){let c=entities.get(p.id);if(c&&(c.role!==p.cursed||c.avatar!==p.avatar)){effects.push({x:c.x,y:c.y,at:time,kind:'transform'});c.destroy(true);entities.delete(p.id);c=null;}if(!c){c=creature(this,p);entities.set(p.id,c);}
+      for(const p of ps){let c=entities.get(p.id);if(c&&(c.role!==p.cursed||c.avatar!==p.avatar)){effects.push({x:c.x,y:c.y,at:time,kind:'transform'});c.body.setTexture(p.cursed?'zombie':'avatar-'+p.avatar%6);c.role=p.cursed;c.avatar=p.avatar;if(p.id===getUserId())sound('transform');}if(!c){c=creature(this,p);entities.set(p.id,c);}
         const local=p.id===getUserId()&&!preview,oldX=c.x,oldY=c.y;
-        if(local){if(fresh){const lag=Math.min(.16,Math.max(0,(now-(room.serverNow||now))/1000)+.05),speed=(p.cursed?room.cursedSpeed:room.survivorSpeed)*(p.cursed||p.energy>0?1:.43);const target=movePosition(p,p.moveX*speed*lag,p.moveY*speed*lag);const err=Math.hypot(target.x-c.x,target.y-c.y);if(err>110){c.x=target.x;c.y=target.y;}else {c.x+=(target.x-c.x)*.24;c.y+=(target.y-c.y)*.24;}}
-          if(!isBlocked()&&!room?.readyRemaining&&p.frozenUntil<now){const speed=(p.cursed?room.cursedSpeed:room.survivorSpeed)*(p.cursed||p.energy>0?1:.43);Object.assign(c,movePosition(c,input.x*speed*dt,input.y*speed*dt));}
-        }else {const alpha=preview?1:1-Math.exp(-delta/80);c.x+=(p.x-c.x)*alpha;c.y+=(p.y-c.y)*alpha;}
+        if(local){
+          if(fresh)predictor.reconcile(p,{...room,readyAt:room.readyAt||0},now);
+          predictor.step(input,dt,room,now);Object.assign(c,predictor.position());
+        }else if(preview){c.x=p.x;c.y=p.y;}
+        else {if(fresh){c.samples.push({x:p.x,y:p.y,at:receipt});if(c.samples.length>20)c.samples.shift();}const position=samplePosition(c.samples,performance.now()-120);if(position)Object.assign(c,position);}
         const moving=local?Math.hypot(input.x,input.y)>.01:p.moving,bob=moving?Math.sin(time/90+p.avatar)*2:Math.sin(time/400+p.avatar)*.6;
         c.body.y=-20+bob;c.feet[0].y=12+(moving?Math.sin(time/100)*4:0);c.feet[1].y=12-(moving?Math.sin(time/100)*4:0);c.body.scaleX=Math.abs(c.body.scaleX)*(Math.cos(local?aim:p.aim||0)<-.2?-1:1);
         c.gun.setVisible(!!p.launcher);c.gun.rotation=local?aim:p.aim||0;c.shield.setVisible(!!p.shielded||p.frozenUntil>now);c.shield.setStrokeStyle(p.frozenUntil>now?5:3,p.frozenUntil>now?0x66d6fa:0x8bbceb,.6+.2*Math.sin(time/200));
         c.hp.clear();if(p.hp<100&&!p.cursed){c.hp.fillStyle(INK);c.hp.fillRoundedRect(-24,-61,48,7,3);c.hp.fillStyle(0xf77d8e);c.hp.fillRoundedRect(-22,-59,44*p.hp/100,3,1);}
         c.setDepth(c.y+20).setAlpha(p.connected===false?.5:1);
         if(fresh&&p.hp<c.prevHP){effects.push({x:c.x,y:c.y,at:time,kind:'hit'});if(local){this.cameras.main.shake(130,.003);sound('hit');}}
-        if(fresh&&p.coins>c.prevCoins){const reward=this.add.text(c.x,c.y-65,'+'+(p.coins-c.prevCoins),{fontFamily:'Outfit',fontSize:20,fontStyle:'bold',color:'#ffbc4b',stroke:'#253a58',strokeThickness:4}).setOrigin(.5).setDepth(1800);this.tweens.add({targets:reward,y:reward.y-40,alpha:0,duration:850,onComplete:()=>reward.destroy()});if(local)sound('reward');}
-        if(fresh&&p.ammo<c.prevAmmo&&local)sound('shoot');c.prevHP=p.hp;c.prevCoins=p.coins;c.prevAmmo=p.ammo;
+        if(fresh&&p.coins>c.prevCoins){const reward=this.add.text(c.x,c.y-65,'+'+(p.coins-c.prevCoins),{fontFamily:'Outfit',fontSize:20,fontStyle:'bold',color:'#ffbc4b',stroke:'#253a58',strokeThickness:4}).setOrigin(.5).setDepth(1800);this.tweens.add({targets:reward,y:reward.y-40,alpha:0,duration:850,onComplete:()=>reward.destroy()});if(local&&!isBlocked())sound('reward');}
+        c.prevHP=p.hp;c.prevCoins=p.coins;c.prevAmmo=p.ammo;
         if(moving&&time-lastFoot>140&&Math.hypot(oldX-c.x,oldY-c.y)>1)prints.push({x:c.x,y:c.y+12,at:time});
       }
       if(time-lastFoot>140)lastFoot=time;
       const me=entities.get(getUserId());if(!preview)this.cameras.main.centerOn(me?.x||920,me?.y||620);
       reticle.clear();if(me&&pointerAim&&!isBlocked()){const x=me.x+Math.cos(aim)*100,y=me.y+Math.sin(aim)*100;reticle.lineStyle(2,INK,.8);reticle.strokeCircle(x,y,7);reticle.lineBetween(x-13,y,x-4,y);reticle.lineBetween(x+4,y,x+13,y);reticle.lineBetween(x,y-13,x,y-4);reticle.lineBetween(x,y+4,x,y+13);}
-      shotLayer.clear();for(const shot of room?.shots||[]){const age=Math.min(.12,Math.max(0,(now-(room.serverNow||now))/1000)),x=shot.x+shot.vx*age,y=shot.y+shot.vy*age;shotLayer.lineStyle(4,shot.cursed?0xaacaf4:0xbfe8fa,.7);shotLayer.lineBetween(x-shot.vx*.025,y-shot.vy*.025,x,y);shotLayer.fillStyle(shot.cursed?0xe0ddff:0xffffff);shotLayer.fillCircle(x,y,7);shotLayer.lineStyle(2,INK);shotLayer.strokeCircle(x,y,7);}
+      shotLayer.clear();for(const shot of room?.shots||[]){const age=Math.min(.2,Math.max(0,(performance.now()-receipt)/1000)),x=shot.x+shot.vx*age,y=shot.y+shot.vy*age;shotLayer.lineStyle(4,shot.cursed?0xaacaf4:0xbfe8fa,.7);shotLayer.lineBetween(x-shot.vx*.025,y-shot.vy*.025,x,y);shotLayer.fillStyle(shot.cursed?0xe0ddff:0xffffff);shotLayer.fillCircle(x,y,7);shotLayer.lineStyle(2,INK);shotLayer.strokeCircle(x,y,7);}
       for(const f of room?.fx||[])if(!seenFX.has(f.id)){seenFX.add(f.id);effects.push({...f,at:time});}if(seenFX.size>500)seenFX.clear();
       fxLayer.clear();for(let i=prints.length-1;i>=0;i--){const f=prints[i],age=time-f.at;if(age>1800){prints.splice(i,1);continue;}fxLayer.fillStyle(0x6c9db9,.12*(1-age/1800));fxLayer.fillEllipse(f.x-8,f.y,8,4);fxLayer.fillEllipse(f.x+8,f.y+4,8,4);}
       for(let i=effects.length-1;i>=0;i--){const f=effects[i],age=(time-f.at)/600;if(age>1){effects.splice(i,1);continue;}fxLayer.fillStyle(f.kind==='transform'?0xba9bff:0xffffff,1-age);for(let j=0;j<9;j++){const a=j*Math.PI*2/9;fxLayer.fillCircle(f.x+Math.cos(a)*age*50,f.y+Math.sin(a)*age*50,4*(1-age)+1);}}
@@ -130,5 +126,5 @@ export function createWorld(parent,{preview=false,getState=()=>null,getUserId=()
   }
   game=new Phaser.Game({type:Phaser.AUTO,parent,...size(),scene:SnowScene,backgroundColor:'#deeffc',render:{antialias:true},scale:{mode:Phaser.Scale.RESIZE,autoCenter:Phaser.Scale.CENTER_BOTH},audio:{noAudio:true},banner:false});
   const observer=new ResizeObserver(()=>game.scale.resize(size().width,size().height));observer.observe(parent);
-  return {destroy(){observer.disconnect();window.removeEventListener('blur',blur);audio?.close();game.destroy(true);entities.clear();},setTouch(x,y){touch={x,y};pointerAim=false;},setFiring(value){held=value;},shoot:fire,toggleMap(){showMap=!showMap;},toggleSound(){muted=!muted;localStorage.setItem('frostbound-muted',String(muted));if(!muted)sound('reward');return !muted;}};
+  return {destroy(){observer.disconnect();window.removeEventListener('blur',blur);game.destroy(true);entities.clear();},setTouch(x,y){touch={x,y};pointerAim=false;},setFiring(value){if(value)unlockSound();held=value;},shoot:fire,toggleMap(){showMap=!showMap;},toggleSound};
 }

@@ -8,7 +8,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import QRCode from 'qrcode';
-import {newPlayer,startRoom,tickRoom,publicRoom,shoot,interact,finishRoom} from './simulation.js';
+import {newPlayer,startRoom,tickRoom,publicRoom,shoot,interact,finishRoom,applyInputCommands} from './simulation.js';
 import {SAMPLE,validateQuestions} from './questions.js';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -228,6 +228,7 @@ wss.on('connection',ws=>{
     let m;try{m=JSON.parse(raw);}catch{return;}
     if(!p||room.status!=='playing')return;
     if(m.type==='input'){
+      if(Array.isArray(m.commands)){applyInputCommands(room,p,m.commands,now);if(Number.isFinite(m.aim))p.aim=m.aim;return;}
       if(!Number.isFinite(m.x)||!Number.isFinite(m.y))return;
       const len=Math.max(1,Math.hypot(m.x,m.y));p.input={x:m.x/len,y:m.y/len};p.lastInput=now;if(Number.isFinite(m.aim))p.aim=m.aim;
     }else if(m.type==='practice-pause'&&room.practice&&room.hostId===p.id){room.paused=!!m.paused;p.input={x:0,y:0};

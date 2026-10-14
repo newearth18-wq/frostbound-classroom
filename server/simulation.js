@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {WORLD,blocked,distance,movePosition} from './world.js';
+import {advancePlayer} from '../public/motion.js';
 export const COLORS=['#6476e5','#ef9865','#55b8ad','#e18fba','#edbd59','#7aa7e2'];
 export function newPlayer(id,name,avatar=0,bot=false) {
   return {id,name,avatar:Number(avatar)%6,bot,x:800+Math.random()*230,y:440+Math.random()*270,
@@ -20,6 +21,16 @@ export function startRoom(room,now=Date.now()) {
   room.events=[{id:randomUUID(),text:`${cursed.name} ติดคำสาปคนแรก!`,at:now}];
 }
 export function event(room,text,now=Date.now()) {room.events.push({id:randomUUID(),text,at:now});room.events=room.events.slice(-4);}
+export function applyInputCommands(room,p,commands,now=Date.now()){
+  if(!Array.isArray(commands)||commands.length>64||p.bot)return;
+  p.commandMotion=true;p.motionCredit=Math.min(.2,(p.motionCredit??.1)+Math.max(0,(now-(p.motionAt??now))/1000));p.motionAt=now;
+  for(const c of commands){
+    if(!Number.isSafeInteger(c.seq)||c.seq<1||c.seq<=(p.inputSeq||0)||!Number.isFinite(c.dt)||c.dt<=0||c.dt>.05||!Number.isFinite(c.x)||!Number.isFinite(c.y))continue;
+    const dt=Math.min(c.dt,p.motionCredit);p.motionCredit=Math.max(0,p.motionCredit-dt);
+    const n=Math.max(1,Math.hypot(c.x,c.y));p.input={x:c.x/n,y:c.y/n};p.lastInput=now;
+    const next=advancePlayer(p,{...c,dt},room,now);p.x=next.x;p.y=next.y;p.energy=next.energy;p.inputSeq=c.seq;
+  }
+}
 export function shoot(room,p,angle,now=Date.now()) {
   if(room.status!=='playing'||room.paused||now<(room.readyAt||0)||!p.connected||!p.launcher||p.ammo<1||p.frozenUntil>now||now-p.lastShot<400||!Number.isFinite(angle))return;
   p.ammo--;p.lastShot=now;p.aim=angle;
@@ -101,7 +112,7 @@ export function tickRoom(room,dt,now=Date.now()) {
     if(p.frozenUntil>now)continue;
     const moving=Math.hypot(p.input.x,p.input.y);
     const speed=(p.cursed?room.cursedSpeed:room.survivorSpeed)*(p.cursed||p.energy>0?1:.43);
-    if(moving){
+    if(moving&&!p.commandMotion){
       Object.assign(p,movePosition(p,p.input.x*speed*dt,p.input.y*speed*dt));
       if(!p.cursed)p.energy=Math.max(0,p.energy-dt*2.4);
     }
@@ -137,8 +148,8 @@ export function tickRoom(room,dt,now=Date.now()) {
 export function publicRoom(room,userId,now=Date.now()) {
   return {code:room.code,title:room.title,hostName:room.hostName,isHost:room.hostId===userId,status:room.status,
     duration:room.duration,remaining:Math.max(0,Math.min(room.duration,Math.ceil((room.endsAt-now)/1000))),reason:room.reason,
-    startedAt:room.startedAt,endsAt:room.endsAt,serverNow:now,readyRemaining:Math.max(0,Math.ceil(((room.readyAt||0)-now)/1000)),paused:room.paused,
+    startedAt:room.startedAt,readyAt:room.readyAt,endsAt:room.endsAt,serverNow:now,readyRemaining:Math.max(0,Math.ceil(((room.readyAt||0)-now)/1000)),paused:room.paused,
     survivorSpeed:room.survivorSpeed,cursedSpeed:room.cursedSpeed,quizTitle:room.quizTitle,practice:room.practice,
-    players:[...room.players.values()].map(({input,lastInput,lastShot,immuneUntil,question,questionAt,route,routeAt,nextBotShot,...p})=>({...p,moving:Math.hypot(input.x,input.y)>.01,moveX:input.x,moveY:input.y,shielded:immuneUntil>now})),
-    shots:room.shots||[],farms:room.farms||[],fx:room.fx||[],events:room.events||[],world:WORLD};
+    players:[...room.players.values()].map(({input,lastInput,lastShot,immuneUntil,question,questionAt,route,routeAt,nextBotShot,commandMotion,motionCredit,motionAt,...p})=>({...p,moving:Math.hypot(input.x,input.y)>.01,moveX:input.x,moveY:input.y,shielded:immuneUntil>now})),
+    shots:room.shots||[],farms:room.farms||[],fx:room.fx||[],events:room.events||[]};
 }
