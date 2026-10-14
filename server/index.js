@@ -14,14 +14,14 @@ import {SAMPLE,validateQuestions} from './questions.js';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 if(fs.existsSync(path.join(root,'.env')))process.loadEnvFile(path.join(root,'.env'));
 const dataDir=process.env.DATA_DIR||path.join(root,'data');
-if(process.env.RENDER==='true'&&!process.env.DATABASE_URL)throw Error('Render deployment requires DATABASE_URL for durable accounts');
+if(process.env.RENDER==='true'&&!process.env.DATABASE_URL&&!process.env.SUPABASE_URL)throw Error('Hosted deployment requires durable storage');
 const db=await openDatabase({dataDir});
 const app=express(),server=createServer(app),wss=new WebSocketServer({noServer:true,maxPayload:8192});
 const rooms=new Map(),guests=new Map(),rates=new Map();
 const PORT=Number(process.env.PORT||3000);
 app.disable('x-powered-by');
 if(process.env.TRUST_PROXY==='1'||process.env.RENDER==='true')app.set('trust proxy',1);
-app.get('/healthz',async(req,res)=>{try{await db.health();res.json({ok:true});}catch{res.status(503).json({ok:false});}});
+app.get('/healthz',async(req,res)=>{try{await db.health();res.json({ok:true,storage:db.kind});}catch{res.status(503).json({ok:false});}});
 app.use((req,res,next)=>{
   res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');
   res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' ws: wss:; media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'");
@@ -37,7 +37,7 @@ async function identify(req){
   const guest=guests.get(t);if(guest&&guest.expires>Date.now())return guest.user;
   return (await db.prepare('SELECT u.id,u.email,u.name,u.role,u.avatar FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token=? AND s.expires>?').get(t,Date.now()))||null;
 }
-app.use(async(req,res,next)=>{req.user=await identify(req);next();});
+app.use(async(req,res,next)=>{if(req.path.startsWith('/api/'))req.user=await identify(req);next();});
 function required(req,res,next){if(!req.user)return res.status(401).json({error:'กรุณาเข้าสู่ระบบก่อน'});next();}
 function teacher(req,res,next){if(req.user?.role!=='teacher')return res.status(403).json({error:'บัญชีครูเท่านั้นที่สร้างห้องและชุดคำถามได้'});next();}
 function limited(req,res,next){

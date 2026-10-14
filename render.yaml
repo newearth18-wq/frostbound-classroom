@@ -1,4 +1,4 @@
-# Free trial: Render's free Postgres expires after 30 days.
+# Render hosts the game. Supabase stores durable accounts, quizzes and history.
 services:
   - type: web
     name: frostbound-classroom
@@ -19,12 +19,7 @@ services:
         value: true
       - key: TRUST_PROXY
         value: 1
-      - key: DATABASE_URL
-        fromDatabase:
-          name: frostbound-classroom-db
-          property: connectionString
-databases:
-  - name: frostbound-classroom-db
-    plan: free
-    region: singapore
-    postgresMajorVersion: "17"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false

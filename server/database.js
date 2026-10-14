@@ -2,6 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import pg from 'pg';
 import fs from 'node:fs';
 import path from 'node:path';
+import {openSupabaseDatabase} from './supabase-database.js';
 
 const schema=`
 CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL,avatar INTEGER DEFAULT 0);
@@ -13,6 +14,10 @@ CREATE INDEX IF NOT EXISTS matches_user_date_idx ON matches(user_id,played_at);
 CREATE INDEX IF NOT EXISTS quizzes_owner_idx ON quizzes(owner);`;
 
 export async function openDatabase({connectionString=process.env.DATABASE_URL,dataDir}={}){
+  if(process.env.SUPABASE_URL){
+    const db=openSupabaseDatabase({url:process.env.SUPABASE_URL,secretKey:process.env.SUPABASE_SECRET_KEY||process.env.SUPABASE_SERVICE_ROLE_KEY});
+    await db.health();return db;
+  }
   if(connectionString){
     pg.types.setTypeParser(20,value=>Number(value));
     // Render's private database URL stays inside the Singapore network. TLS can
