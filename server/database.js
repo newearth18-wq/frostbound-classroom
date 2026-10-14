@@ -16,7 +16,21 @@ CREATE INDEX IF NOT EXISTS quizzes_owner_idx ON quizzes(owner);`;
 export async function openDatabase({connectionString=process.env.DATABASE_URL,dataDir}={}){
   if(process.env.SUPABASE_URL){
     const db=openSupabaseDatabase({url:process.env.SUPABASE_URL,secretKey:process.env.SUPABASE_SECRET_KEY||process.env.SUPABASE_SERVICE_ROLE_KEY});
-    await db.health();return db;
+    await db.health();
+    if(process.env.MIGRATE_RENDER_STORAGE==='true'&&connectionString){
+      const sourcePool=new pg.Pool({connectionString,max:1,connectionTimeoutMillis:10000});
+      const client=await sourcePool.connect();
+      try{
+        await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+        const counts={};
+        for(const table of ['users','sessions','quizzes','matches']){
+          const result=await client.query(`SELECT * FROM ${table}`);await db.importRows(table,result.rows);counts[table]=result.rows.length;
+        }
+        await client.query('COMMIT');console.log('Storage migration completed:',JSON.stringify(counts));
+      }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}
+      finally{client.release();await sourcePool.end();}
+    }
+    return db;
   }
   if(connectionString){
     pg.types.setTypeParser(20,value=>Number(value));

@@ -50,6 +50,9 @@ export function openSupabaseDatabase({url,secretKey}){
       };
     },
     async health(){await request('users',{select:'id',limit:1});},
+    async importRows(table,rows){
+      for(let offset=0;offset<rows.length;offset+=100){const batch=rows.slice(offset,offset+100).map(row=>Object.fromEntries(columns[table].map(name=>[name,row[name]])));await request(table,{on_conflict:table==='sessions'?'token':'id'},'POST',batch,true);}
+    },
     async close(){}
   };
 }
